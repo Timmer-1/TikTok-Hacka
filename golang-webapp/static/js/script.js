@@ -1,4 +1,23 @@
 document.addEventListener('DOMContentLoaded', function () {
+    let socket = new WebSocket("ws://localhost:8080/notifications");
+
+    socket.onopen = function () {
+        console.log("WebSocket connection established.");
+    };
+
+    socket.onmessage = function (event) {
+        console.log("WebSocket message received:", event.data);
+        showNotification("New content posted: " + event.data);
+    };
+
+    socket.onclose = function (event) {
+        if (event.wasClean) {
+            console.log(`WebSocket connection closed cleanly, code=${event.code} reason=${event.reason}`);
+        } else {
+            console.error('WebSocket connection closed abruptly.');
+        }
+    }
+
     // Add conditional class based on content length
     document.querySelectorAll('#contentList li').forEach(function (item) {
         const contentText = item.querySelector('.content-text').textContent;
@@ -10,28 +29,18 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     document.getElementById('contentForm').addEventListener('submit', function (e) {
-        // e.preventDefault(); // Remove or comment out this line
+        e.preventDefault();
 
         const contentInput = document.getElementById('contentInput');
         const content = contentInput.value.trim();
 
         if (content) {
-            // Add content to the list in the DOM (optional)
-            addContentToList(content);
-            contentInput.value = '';
-
-            // Check if the newly added content is long
-            const newItem = document.querySelector('#contentList li:last-child');
-            if (content.length > 100) {
-                newItem.classList.add('long-text');
-            }
+            this.submit(); // Only submit if the content is not empty
+        } else {
+            alert("Content cannot be empty");
         }
-
-        // Submit the form to save the data to the database
-        // The form submission will now proceed and be handled by the server
     });
 });
-
 function deleteMessage(event, id) {
     event.stopPropagation();  // Prevent the click event from bubbling up to the li element
     console.log(`Delete button clicked for message ID: ${id}`);  // Debugging log
@@ -51,26 +60,8 @@ function deleteMessage(event, id) {
             .catch(error => console.error('Error:', error));
     }
 }
-
-
-let socket = new WebSocket("ws://localhost:8080/notifications");
-
-socket.onopen = function () {
-    console.log("WebSocket connection established.");
-};
-
-socket.onmessage = function (event) {
-    console.log("WebSocket message received:", event.data);
-    let newMessage = event.data;
-    showNotification("New content posted: " + newMessage);
-};
-
-socket.onclose = function (event) {
-    if (event.wasClean) {
-        console.log(`WebSocket connection closed cleanly, code=${event.code} reason=${event.reason}`);
-    } else {
-        console.error('WebSocket connection closed abruptly.');
-    }
+socket.onerror = function (error) {
+    console.error("WebSocket error:", error);
 };
 
 socket.onerror = function (error) {
@@ -87,8 +78,11 @@ function showNotification(message) {
     notificationModal.textContent = message;
     notificationModal.classList.add("show");
 
+    // Clear any existing timeouts to avoid flickering if notifications come in quick succession
+    clearTimeout(notificationModal.hideTimeout);
+
     // Hide the notification after 3 seconds
-    setTimeout(function () {
+    notificationModal.hideTimeout = setTimeout(function () {
         notificationModal.classList.remove("show");
     }, 3000);
 }
@@ -115,9 +109,10 @@ function favoriteContent(msgID, content) {
     const li = document.createElement('li');
     li.id = `favorite-${msgID}`;
     li.innerHTML = `
-        ${content}
-        <button class="delete" onclick="deleteFavorite(event, '${msgID}')">Remove from Favorites</button>
-    `;
+        <div class="content-text">${content}</div>
+        <div class="button-container">
+            <button class="delete" onclick="deleteFavorite(event, '${msgID}')">Remove from Favorites</button>
+        </div>`;
     favoriteList.appendChild(li);
 
     // Send favorite request to the server
@@ -128,7 +123,12 @@ function favoriteContent(msgID, content) {
         },
         body: JSON.stringify({ 'msg_id': msgID }),
     })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                return response.text().then(text => { throw new Error(text); });
+            }
+            return response.json();
+        })
         .then(data => {
             console.log('Success:', data);
         })
@@ -136,6 +136,7 @@ function favoriteContent(msgID, content) {
             console.error('Error:', error);
         });
 }
+
 
 
 function deleteFavorite(event, id) {

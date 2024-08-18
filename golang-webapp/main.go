@@ -8,8 +8,8 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
-	"time"
 
 	"github.com/go-redis/redis/v8"
 	_ "github.com/go-sql-driver/mysql"
@@ -21,7 +21,7 @@ var (
 	mu   sync.Mutex
 	tmpl *template.Template
 	rdb  *redis.Client
-	ctx  context.Context
+	ctx  = context.Background()
 )
 
 type Message struct {
@@ -44,7 +44,6 @@ var upgrader = websocket.Upgrader{
 
 func main() {
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	ctx = context.Background()
 
 	// Initialize Redis client
 	rdb = redis.NewClient(&redis.Options{
@@ -56,7 +55,7 @@ func main() {
 	var err error
 	db, err = sql.Open("mysql", "root:Dragon1491@tcp(127.0.0.1:3306)/tiktok_db") // Update UserName and Password
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to connect to database:", err)
 	}
 	defer db.Close()
 
@@ -67,7 +66,7 @@ func main() {
 	http.HandleFunc("/submit", submitHandler)
 	http.HandleFunc("/delete", deleteHandler)
 	http.HandleFunc("/notifications", notificationHandler)
-	http.HandleFunc("/submitRecommend", submitRecommendHandler)
+	http.HandleFunc("/submitRecommend", submitRecommendedHandler)
 	http.HandleFunc("/recommend", getRecommendedHandler)
 	http.HandleFunc("/deleteFavorite", deleteFavoriteHandler) // New handler for deleting from favorites
 
@@ -81,7 +80,6 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Unlock()
 
 	if err != nil {
-		log.Println("Error fetching messages:", err)
 		http.Error(w, "Error retrieving messages", http.StatusInternalServerError)
 		return
 	}
@@ -113,20 +111,12 @@ func submitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert the new message into the database
 	mu.Lock()
 	_, err := db.Exec("INSERT INTO messages (content) VALUES (?)", content)
 	mu.Unlock()
 
 	if err != nil {
 		http.Error(w, "Error saving message", http.StatusInternalServerError)
-		return
-	}
-
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-
-	if rdb == nil {
-		http.Error(w, "Redis client not initialized", http.StatusInternalServerError)
 		return
 	}
 
@@ -140,6 +130,11 @@ func submitHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func notificationHandler(w http.ResponseWriter, r *http.Request) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("WebSocket upgrade failed:", err)
@@ -150,20 +145,6 @@ func notificationHandler(w http.ResponseWriter, r *http.Request) {
 	pubsub := rdb.Subscribe(ctx, "notifications")
 	defer pubsub.Close()
 
-	ticker := time.NewTicker(time.Second * 30) // Ping every 30 seconds
-	defer ticker.Stop()
-
-	go func() {
-		for {
-			<-ticker.C
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				log.Println("Error sending ping:", err)
-				return
-			}
-		}
-	}()
-
-	// Listen for messages from Redis and send them to the WebSocket client
 	for {
 		msg, err := pubsub.ReceiveMessage(ctx)
 		if err != nil {
@@ -171,14 +152,9 @@ func notificationHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Println("Received message from Redis:", msg.Payload)
-
 		err = conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 		if err != nil {
 			log.Println("Error writing to WebSocket:", err)
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket closed unexpectedly: %v", err)
-			}
 			return
 		}
 	}
@@ -264,59 +240,48 @@ func getRecommendedHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func deleteMessageHandler(w http.ResponseWriter, r *http.Request) {
+func submitRecommendedHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		http.Error(w, "Missing ID", http.StatusBadRequest)
-		return
-	}
-
-	// First, delete all favorites associated with the message
-	_, err := db.Exec("DELETE FROM favorites WHERE message_id = ?", id)
-	if err != nil {
-		log.Printf("Error deleting favorites for message ID %s: %v", id, err)
-		http.Error(w, "Failed to delete favorites", http.StatusInternalServerError)
-		return
-	}
-
-	// Then, delete the message itself
-	_, err = db.Exec("DELETE FROM messages WHERE id = ?", id)
-	if err != nil {
-		log.Printf("Error deleting message with ID %s: %v", id, err)
-		http.Error(w, "Failed to delete message", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func submitRecommendHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var data struct {
-		MsgID string `json:"msg_id"`
-	}
-
+	// Decode the JSON request body
+	var data requestData
 	err := json.NewDecoder(r.Body).Decode(&data)
 	if err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
 		return
 	}
 
-	// Log the received favorite request for debugging
-	log.Printf("Received favorite for message ID: %s", data.MsgID)
+	msgID := data.MsgID
+	if msgID == "" {
+		http.Error(w, "msg_id cannot be empty", http.StatusBadRequest)
+		return
+	}
 
-	// Return a success response without necessarily saving to a database
+	id, err := strconv.Atoi(msgID)
+	if err != nil {
+		http.Error(w, "Invalid msg_id format", http.StatusBadRequest)
+		return
+	}
+
+	// Insert the new favorite into the database
+	mu.Lock()
+	_, err = db.Exec("INSERT INTO favorites (message_id) VALUES (?)", id)
+	mu.Unlock()
+	if err != nil {
+		log.Println("Failed to add favorite:", err)
+		http.Error(w, "Failed to add favorite", http.StatusInternalServerError)
+		return
+	}
+
+	log.Println("Successfully added message ID:", id, "to favorites")
+
+	// Return a JSON success message
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"success": true}`))
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
 func deleteFavoriteHandler(w http.ResponseWriter, r *http.Request) {
@@ -327,13 +292,30 @@ func deleteFavoriteHandler(w http.ResponseWriter, r *http.Request) {
 
 	id := r.URL.Query().Get("id")
 	if id == "" {
-		http.Error(w, "Missing ID", http.StatusBadRequest)
+		http.Error(w, "ID parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// Logic to delete the favorite from the database or data store
-	// Example:
-	// _, err := db.Exec("DELETE FROM favorites WHERE id = ?", id)
+	// Delete the favorite from the database
+	mu.Lock()
+	result, err := db.Exec("DELETE FROM favorites WHERE message_id = ?", id)
+	mu.Unlock()
+
+	if err != nil {
+		http.Error(w, "Error removing favorite", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		http.Error(w, "Error checking deletion result", http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
+		http.Error(w, "No favorite found with the given ID", http.StatusNotFound)
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
 }
