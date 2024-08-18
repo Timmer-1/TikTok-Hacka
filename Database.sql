@@ -1,10 +1,8 @@
--- Select the database to use
-USE golang_webapp;
+CREATE DATABASE tiktok_db;
 
-<<<<<<< HEAD
-- CREATE TABLE messages (
-=======
->>>>>>> b662b40b11fec5d24ac174cc857d0719e283057f
+-- Select the database to use
+USE tiktok_db;
+
 -- Create the messages table if it doesn't already exist
 CREATE TABLE IF NOT EXISTS messages (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -12,18 +10,15 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-<<<<<<< HEAD
-- SELECT * FROM messages;
-=======
->>>>>>> b662b40b11fec5d24ac174cc857d0719e283057f
-USE golang_webapp;
 -- Create the favorites table
-CREATE TABLE favorites (
+CREATE TABLE IF NOT EXISTS favorites (
     id INT AUTO_INCREMENT PRIMARY KEY,  -- Primary key for the favorites table
-    message_id INT UNIQUE,                     -- Foreign key column referencing messages
+    message_id INT UNIQUE,              -- Foreign key column referencing messages
     FOREIGN KEY (message_id) REFERENCES messages(id)   -- Foreign key constraint
-<<<<<<< HEAD
 );
-=======
-);
->>>>>>> b662b40b11fec5d24ac174cc857d0719e283057f
+
+ALTER TABLE favorites
+DROP FOREIGN KEY favorites_ibfk_1,
+ADD CONSTRAINT favorites_ibfk_1 FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE;
+
+
