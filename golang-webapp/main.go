@@ -173,9 +173,17 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Convert id to int and check for errors
+	intID, err := strconv.Atoi(id)
+	if err != nil {
+		log.Println("Invalid ID format:", err)
+		http.Error(w, "Invalid ID format", http.StatusBadRequest)
+		return
+	}
+
 	// Delete the message from the database
 	mu.Lock()
-	result, err := db.Exec("DELETE FROM messages WHERE id = ?", id)
+	result, err := db.Exec("DELETE FROM messages WHERE id = ?", intID)
 	mu.Unlock()
 
 	if err != nil {

@@ -45,21 +45,39 @@ function deleteMessage(event, id) {
     event.stopPropagation();  // Prevent the click event from bubbling up to the li element
     console.log(`Delete button clicked for message ID: ${id}`);  // Debugging log
 
-    if (confirm("Are you sure you want to delete this message?")) {
-        fetch(`/delete?id=${id}`, {
+    fetch(`/delete?id=${id}`, {
+        method: 'POST'
+    })
+        .then(response => {
+            if (response.ok) {
+                // Remove the content item from the DOM
+                document.getElementById(`message-${id}`).remove();
+            } else {
+                console.error("Failed to delete message");
+            }
+        })
+        .catch(error => console.error('Error:', error));
+}
+function deleteFavorite(event, id) {
+    event.stopPropagation();  // Prevent the click event from bubbling up to the li element
+
+    if (confirm("Are you sure you want to remove this message from favorites?")) {
+        fetch(`/deleteFavorite?id=${id}`, {
             method: 'POST'
         })
             .then(response => {
                 if (response.ok) {
-                    // Remove the content item from the DOM
-                    document.getElementById(`message-${id}`).remove();
+                    // Remove the favorite item from the DOM
+                    document.getElementById(`favorite-${id}`).remove();
                 } else {
-                    console.error("Failed to delete message");
+                    console.error("Failed to remove favorite message");
                 }
             })
             .catch(error => console.error('Error:', error));
     }
 }
+
+
 socket.onerror = function (error) {
     console.error("WebSocket error:", error);
 };
@@ -73,19 +91,25 @@ window.addEventListener("beforeunload", function () {
 });
 
 // Function to show a notification modal
+// Function to show a notification modal
+let debounceTimeout;
 function showNotification(message) {
     const notificationModal = document.getElementById("notification-modal");
     notificationModal.textContent = message;
     notificationModal.classList.add("show");
 
-    // Clear any existing timeouts to avoid flickering if notifications come in quick succession
-    clearTimeout(notificationModal.hideTimeout);
+    // Clear any existing timeouts to avoid flickering
+    if (notificationModal.hideTimeout) {
+        clearTimeout(notificationModal.hideTimeout);
+    }
 
     // Hide the notification after 3 seconds
     notificationModal.hideTimeout = setTimeout(function () {
         notificationModal.classList.remove("show");
+        notificationModal.hideTimeout = null; // Reset the timeout
     }, 3000);
 }
+
 
 function addContentToList(content) {
     const contentList = document.getElementById('contentList');
