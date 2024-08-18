@@ -53,7 +53,7 @@ func main() {
 
 	// Initialize database connection
 	var err error
-	db, err = sql.Open("mysql", "root:Dragon1491@tcp(127.0.0.1:3306)/tiktok_db") // Update UserName and Password
+	db, err = sql.Open("mysql", "root:password@tcp(127.0.0.1:3306)/tiktok_db") // Update UserName and Password
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
